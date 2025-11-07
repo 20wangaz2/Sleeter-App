@@ -202,6 +202,9 @@ struct ContentView: View {
                 .tabItem {
                     Image(systemName: "figure.run")
                     Text("Workout")
+                    Button(/*@START_MENU_TOKEN@*/"Button"/*@END_MENU_TOKEN@*/) {
+                        /*@START_MENU_TOKEN@*//*@PLACEHOLDER=Action@*/ /*@END_MENU_TOKEN@*/
+                    }
                 }
         }
         .tint(.white)
@@ -413,12 +416,147 @@ struct Calender: View {
 }
 
 struct Workout: View {
+    struct ExerciseSet: Identifiable, Codable {
+        let id: UUID = UUID()
+        var exercise: String
+        var weightKg: Double?
+        var reps: Int?
+        var rpe: Double?
+    }
+
+    @State private var exercise: String = ""
+    @State private var weightKg: Double = 0
+    @State private var reps: Int = 0
+    @State private var rpe: Double = 7.0
+    @State private var sets: [ExerciseSet] = []
+
+    private var volumeKg: Double {
+        sets.reduce(0) { acc, s in acc + (s.weightKg ?? 0) * Double(s.reps ?? 0) }
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            Text("Workout")
-                .foregroundColor(.white)
+            VStack(spacing: 12) {
+                Text("Workout")
+                    .foregroundColor(.white)
+                    .font(.headline)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Text("Exercise")
+                            .foregroundColor(.white)
+                        TextField("e.g. Bench Press", text: $exercise)
+                            .textFieldStyle(.roundedBorder)
+                            .foregroundColor(.white)
+                    }
+                    HStack(spacing: 12) {
+                        Text("Weight (kg)")
+                            .foregroundColor(.white)
+                        TextField("0", value: $weightKg, format: .number)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                            .foregroundColor(.white)
+                    }
+                    HStack(spacing: 12) {
+                        Text("Reps")
+                            .foregroundColor(.white)
+                        TextField("0", value: $reps, format: .number)
+                            .keyboardType(.numberPad)
+                            .textFieldStyle(.roundedBorder)
+                            .foregroundColor(.white)
+                    }
+                    HStack(spacing: 12) {
+                        Text("RPE")
+                            .foregroundColor(.white)
+                        Slider(value: $rpe, in: 5...10, step: 0.5)
+                        Text(String(format: "%.1f", rpe))
+                            .foregroundColor(.white)
+                            .frame(width: 40)
+                    }
+
+                    Button {
+                        addSet()
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus.circle")
+                            Text("Add Set")
+                        }
+                        .foregroundColor(.white)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                }
+                .padding()
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                if sets.isEmpty {
+                    Text("No sets yet")
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.top, 8)
+                } else {
+                    List {
+                        ForEach(sets) { s in
+                            HStack {
+                                Text(s.exercise)
+                                    .foregroundColor(.white)
+                                Spacer()
+                                Text(setSummary(s))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .font(.caption)
+                            }
+                            .listRowBackground(Color.white.opacity(0.06))
+                        }
+                        .onDelete(perform: deleteSets)
+                    }
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                }
+
+                HStack {
+                    Text("Volume: \(Int(volumeKg)) kg")
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text("Sets: \(sets.count)")
+                        .foregroundColor(.white)
+                }
+                .padding(.top, 8)
+
+                Spacer()
+            }
+            .padding()
         }
+    }
+
+    private func setSummary(_ s: ExerciseSet) -> String {
+        let w = s.weightKg ?? 0
+        let r = s.reps ?? 0
+        let rp = s.rpe ?? 0
+        return "\(Int(w))kg x \(r) • RPE \(String(format: "%.1f", rp)))"
+    }
+
+    private func addSet() {
+        let name = exercise.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let new = ExerciseSet(exercise: name, weightKg: weightKg, reps: reps, rpe: rpe)
+        sets.append(new)
+        exercise = ""
+        weightKg = 0
+        reps = 0
+        rpe = 7.0
+    }
+
+    private func deleteSets(at offsets: IndexSet) {
+        sets.remove(atOffsets: offsets)
+    }
+}
+
+struct Workout_Previews: PreviewProvider {
+    static var previews: some View {
+        Workout()
+            .previewDevice("iPhone 15")
+            .preferredColorScheme(.dark)
     }
 }
 
