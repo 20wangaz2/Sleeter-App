@@ -202,9 +202,7 @@ struct ContentView: View {
                 .tabItem {
                     Image(systemName: "figure.run")
                     Text("Workout")
-                    Button(/*@START_MENU_TOKEN@*/"Button"/*@END_MENU_TOKEN@*/) {
-                        /*@START_MENU_TOKEN@*//*@PLACEHOLDER=Action@*/ /*@END_MENU_TOKEN@*/
-                    }
+            
                 }
         }
         .tint(.white)
@@ -417,7 +415,7 @@ struct Calender: View {
 
 struct Workout: View {
     struct ExerciseSet: Identifiable, Codable {
-        let id: UUID = UUID()
+        var id: UUID = UUID()
         var exercise: String
         var weightKg: Double?
         var reps: Int?
