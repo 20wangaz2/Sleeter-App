@@ -115,9 +115,33 @@ final class CalendarManager: ObservableObject {
 
         let hoursCount = max(endHour - startHour, 0)
         guard hoursCount > 0 else { return 0 }
+
+        // Compute allocation that sums exactly to total
         let totalML = max(liters, 0) * 1000.0
-        let perSlotML = totalML / Double(hoursCount)
-        let roundedPerSlot = (perSlotML / 50.0).rounded() * 50.0 // round to nearest 50ml
+        let exactPerSlot = totalML / Double(hoursCount)
+
+        // Choose a display increment (10 ml keeps totals tight while readable)
+        let increment: Double = 10.0
+
+        // Floor the first n-1 slots to the nearest increment, put the remainder in the last slot.
+        let flooredPerSlot = floor(exactPerSlot / increment) * increment
+        var amounts: [Double] = Array(repeating: flooredPerSlot, count: hoursCount)
+        let allocatedSoFar = flooredPerSlot * Double(hoursCount - 1)
+        var lastAmount = totalML - allocatedSoFar
+
+        // Round the last amount to the nearest increment without changing the total across slots.
+        // We clamp to at least 0 and ensure it’s a multiple of increment.
+        lastAmount = max(lastAmount, 0)
+        lastAmount = round(lastAmount / increment) * increment
+        amounts[hoursCount - 1] = lastAmount
+
+        // Safety correction: due to rounding, the sum might drift by up to 1 increment.
+        // Adjust the last slot to ensure exact total.
+        let sumNow = amounts.reduce(0, +)
+        let diff = totalML - sumNow
+        if abs(diff) >= 1 { // 1 ml tolerance
+            amounts[hoursCount - 1] += diff
+        }
 
         var created = 0
         for i in 0..<hoursCount {
@@ -129,13 +153,16 @@ final class CalendarManager: ObservableObject {
             guard let start = calendar.date(from: components) else { continue }
             let end = calendar.date(byAdding: .minute, value: 10, to: start)!
 
+            let ml = max(amounts[i], 0)
+            let roundedDisplay = Int(ml.rounded()) // display whole ml in title
+
             let event = EKEvent(eventStore: eventStore)
             if let defaultCal = eventStore.defaultCalendarForNewEvents {
                 event.calendar = defaultCal
             } else {
                 event.calendar = eventStore.calendars(for: .event).first
             }
-            event.title = "Sleeter: Drink \(Int(roundedPerSlot)) ml"
+            event.title = "Sleeter: Drink \(roundedDisplay) ml"
             event.startDate = start
             event.endDate = end
             event.notes = "Automated water schedule from Sleeter"
@@ -414,22 +441,39 @@ struct Calender: View {
 }
 
 struct Workout: View {
-    struct ExerciseSet: Identifiable, Codable {
-        var id: UUID = UUID()
-        var exercise: String
-        var weightKg: Double?
-        var reps: Int?
-        var rpe: Double?
+    // Sport model and hydration multipliers
+    struct Sport: Identifiable, Hashable {
+        let id = UUID()
+        let name: String
+        // liters per hour recommendation for this sport
+        let litersPerHour: Double
     }
 
-    @State private var exercise: String = ""
-    @State private var weightKg: Double = 0
-    @State private var reps: Int = 0
-    @State private var rpe: Double = 7.0
-    @State private var sets: [ExerciseSet] = []
+    private let sports: [Sport] = [
+        Sport(name: "Running", litersPerHour: 0.8),
+        Sport(name: "Cycling", litersPerHour: 0.7),
+        Sport(name: "Swimming", litersPerHour: 1.0),
+        Sport(name: "Soccer", litersPerHour: 0.9),
+        Sport(name: "Basketball", litersPerHour: 0.9),
+        Sport(name: "Tennis", litersPerHour: 0.8),
+        Sport(name: "Strength Training", litersPerHour: 0.6),
+        Sport(name: "Yoga", litersPerHour: 0.4),
+        Sport(name: "HIIT", litersPerHour: 1.1)
+    ]
 
-    private var volumeKg: Double {
-        sets.reduce(0) { acc, s in acc + (s.weightKg ?? 0) * Double(s.reps ?? 0) }
+    @State private var selectedSport: Sport?
+    @State private var durationMinutes: Int = 30
+    @State private var showHydrationAlert = false
+    @State private var scheduleMessage = ""
+    @StateObject private var calendarManager = CalendarManager()
+
+    // Computed liters based on sport and duration
+    private var recommendedLiters: Double {
+        guard let sport = selectedSport else { return 0 }
+        let hours = max(Double(durationMinutes) / 60.0, 0)
+        // Round to 0.1 L for display/scheduling
+        let liters = sport.litersPerHour * hours
+        return (liters * 10).rounded() / 10.0
     }
 
     var body: some View {
@@ -441,112 +485,70 @@ struct Workout: View {
                     .font(.headline)
 
                 VStack(alignment: .leading, spacing: 12) {
+                    Text("Sport & Hydration")
+                        .foregroundColor(.white)
+                        .font(.subheadline)
+
                     HStack(spacing: 12) {
-                        Text("Exercise")
+                        Text("Sport")
                             .foregroundColor(.white)
-                        TextField("e.g. Bench Press", text: $exercise)
-                            .textFieldStyle(.roundedBorder)
-                            .foregroundColor(.white)
+                        Picker("Select Sport", selection: $selectedSport) {
+                            Text("Choose…").tag(Sport?.none)
+                            ForEach(sports) { sport in
+                                Text(sport.name).tag(Sport?.some(sport))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white)
                     }
+
                     HStack(spacing: 12) {
-                        Text("Weight (kg)")
+                        Text("Duration (min)")
                             .foregroundColor(.white)
-                        TextField("0", value: $weightKg, format: .number)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.roundedBorder)
-                            .foregroundColor(.white)
-                    }
-                    HStack(spacing: 12) {
-                        Text("Reps")
-                            .foregroundColor(.white)
-                        TextField("0", value: $reps, format: .number)
+                        TextField("0", value: $durationMinutes, format: .number)
                             .keyboardType(.numberPad)
                             .textFieldStyle(.roundedBorder)
                             .foregroundColor(.white)
                     }
-                    HStack(spacing: 12) {
-                        Text("RPE")
-                            .foregroundColor(.white)
-                        Slider(value: $rpe, in: 5...10, step: 0.5)
-                        Text(String(format: "%.1f", rpe))
-                            .foregroundColor(.white)
-                            .frame(width: 40)
-                    }
 
-                    Button {
-                        addSet()
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus.circle")
-                            Text("Add Set")
+                    HStack {
+                        Text("Recommended water: \(String(format: "%.1f", recommendedLiters)) L")
+                            .foregroundColor(.white.opacity(0.9))
+                        Spacer()
+                        Button {
+                            let liters = recommendedLiters
+                            guard liters > 0 else { return }
+                            let today = Date()
+                            calendarManager.ensureAccessAndScheduleWater(forLiters: liters, on: today) { count in
+                                scheduleMessage = "Scheduled \(count) water reminders for today based on \(selectedSport?.name ?? "sport")"
+                                showHydrationAlert = true
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "calendar.badge.clock")
+                                Text("Schedule water")
+                            }
+                            .foregroundColor(.white)
                         }
-                        .foregroundColor(.white)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .disabled(recommendedLiters <= 0)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
                 }
                 .padding()
                 .background(Color.white.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                if sets.isEmpty {
-                    Text("No sets yet")
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(.top, 8)
-                } else {
-                    List {
-                        ForEach(sets) { s in
-                            HStack {
-                                Text(s.exercise)
-                                    .foregroundColor(.white)
-                                Spacer()
-                                Text(setSummary(s))
-                                    .foregroundColor(.white.opacity(0.8))
-                                    .font(.caption)
-                            }
-                            .listRowBackground(Color.white.opacity(0.06))
-                        }
-                        .onDelete(perform: deleteSets)
-                    }
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                }
-
-                HStack {
-                    Text("Volume: \(Int(volumeKg)) kg")
-                        .foregroundColor(.white)
-                    Spacer()
-                    Text("Sets: \(sets.count)")
-                        .foregroundColor(.white)
-                }
-                .padding(.top, 8)
-
                 Spacer()
             }
             .padding()
         }
-    }
-
-    private func setSummary(_ s: ExerciseSet) -> String {
-        let w = s.weightKg ?? 0
-        let r = s.reps ?? 0
-        let rp = s.rpe ?? 0
-        return "\(Int(w))kg x \(r) • RPE \(String(format: "%.1f", rp)))"
-    }
-
-    private func addSet() {
-        let name = exercise.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let new = ExerciseSet(exercise: name, weightKg: weightKg, reps: reps, rpe: rpe)
-        sets.append(new)
-        exercise = ""
-        weightKg = 0
-        reps = 0
-        rpe = 7.0
-    }
-
-    private func deleteSets(at offsets: IndexSet) {
-        sets.remove(atOffsets: offsets)
+        .alert(scheduleMessage, isPresented: $showHydrationAlert) {
+            Button("OK", role: .cancel) {}
+        }
+        .onAppear {
+            calendarManager.updateAuthorization()
+        }
     }
 }
 
@@ -636,3 +638,4 @@ struct WaterProgressView: View {
     }
 }
     
+
